@@ -1,0 +1,6 @@
+{
+  "name": "Mystic Tarot",
+  "description": "Scan and interpret real physical Tarot cards using the Gemini Vision Oracle.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
