@@ -1,26 +1,20 @@
 // End-to-end integration test for the geminiProxy Cloud Function.
 //
 // Tier 1 (always runs, no secrets): verifies the deployed proxy's HTTP contract
-//   - GET            -> 200 (health) OR 405 (POST-only). See drift note below.
+//   - GET            -> 200 health
 //   - POST no auth   -> 401
 //   - POST bad auth  -> 401
 //
-// NOTE ON URL / CONTRACT DRIFT (verified 2026-07 via curl against project
-// taro-ai-502921):
+// Live contract verified 2026-07 against project taro-ai-502921:
 //   * The LIVE deployed function is named `secureGeminiProxy` and answers at
 //     https://securegeminiproxy-248382356220.us-central1.run.app
 //       - GET            -> 200 {"status":"ok","service":"taro-secure-gemini-proxy"}
 //       - POST no auth   -> 401 {"error":"Unauthorized: missing Bearer token"}
 //       - POST bad auth  -> 401 {"error":"Unauthorized: invalid or expired token"}
-//   * This repo's proxy/index.js exports a DIFFERENT function `geminiProxy`
-//     whose GET returns 405. The two have diverged.
 //   * The URL baked into the Android app
 //     (geminiproxy-...-ais-us-east5-...cloudfunctions.net) is DEAD (404) — a
 //     real production bug tracked separately, NOT exercised by this test.
-//   The security-critical invariant (unauthenticated POST is never proxied to
-//   Gemini -> 401) is asserted strictly. GET is allowed to be 200 or 405 so the
-//   test is correct against the live service while remaining valid if the repo
-//   impl is redeployed.
+//   This repo now exports the matching `secureGeminiProxy` implementation.
 //
 // Tier 2 (happy path, runs only if secrets are present): obtains a real Firebase
 //   ID token via Identity Toolkit signInWithPassword, then POSTs a minimal
@@ -51,16 +45,13 @@ const TIER2_READY = Boolean(
 // Tier 1 — contract checks (no secrets)
 // ---------------------------------------------------------------------------
 
-test('Tier1: GET returns 200 (live health) or 405 (repo POST-only)', async () => {
-  // Drift: live `secureGeminiProxy` GET -> 200 health; repo `geminiProxy`
-  // GET -> 405. Accept either so the test is correct against the live service
-  // and remains valid if the repo impl is redeployed. The security invariant is
-  // asserted by the POST cases below (unauthenticated POST is never proxied).
+test('Tier1: GET returns the production health contract', async () => {
   const res = await fetch(PROXY_URL, { method: 'GET' });
-  assert.ok(
-    res.status === 200 || res.status === 405,
-    `expected 200 or 405, got ${res.status}`
-  );
+  assert.strictEqual(res.status, 200, `expected 200, got ${res.status}`);
+  assert.deepStrictEqual(await res.json(), {
+    status: 'ok',
+    service: 'taro-secure-gemini-proxy',
+  });
 });
 
 test('Tier1: POST without Authorization returns 401', async () => {
