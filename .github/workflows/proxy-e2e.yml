@@ -3,7 +3,7 @@ name: proxy-e2e
 # End-to-end integration test for the geminiProxy Cloud Function.
 #
 # Tier 1 (always runs, no secrets): asserts the deployed proxy enforces its HTTP
-#   contract (GET->405, POST no-auth->401, POST bad-auth->401). This doubles as a
+#   contract (GET health->200, POST no-auth->401, POST bad-auth->401). This doubles as a
 #   live deployment gate: if the proxy URL is not serving the function, Tier 1
 #   fails.
 #
@@ -11,10 +11,14 @@ name: proxy-e2e
 #   as GitHub Actions secrets; otherwise it skips gracefully.
 #
 # Required repo secrets/vars for full coverage:
-#   PROXY_URL            (var or secret) - proxy base URL; defaults to the baked-in URL if unset
+#   PROXY_URL            (var or secret) - proxy base URL; defaults in e2e.test.js
+#                                          to the live secureGeminiProxy Run URL
 #   FIREBASE_WEB_API_KEY (secret)        - Firebase Web API key for signInWithPassword
 #   TEST_USER_EMAIL      (secret)        - a test account email in the Firebase project
 #   TEST_USER_PASSWORD   (secret)        - that account's password
+#
+# Tier-2 note: even with all secrets set it currently fails because the
+# taro-ai-502921 Gemini prepay credits are depleted (429). Fund/BYOK to go green.
 
 on:
   push:
@@ -22,6 +26,8 @@ on:
     paths:
       - 'proxy/**'
       - '.github/workflows/proxy-e2e.yml'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -31,7 +37,9 @@ jobs:
       run:
         working-directory: proxy
     env:
-      PROXY_URL: ${{ vars.PROXY_URL || secrets.PROXY_URL }}
+      # Falls back to the live secureGeminiProxy URL if the repo var/secret is unset,
+      # so CI never silently tests a stale/dead endpoint.
+      PROXY_URL: ${{ vars.PROXY_URL || secrets.PROXY_URL || 'https://securegeminiproxy-248382356220.us-central1.run.app' }}
       FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
       TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
@@ -40,7 +48,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: proxy/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit and static checks
+        run: npm test && npm run check
 
       - name: Run E2E tests (Tier 1 always; Tier 2 if secrets present)
         run: npm run test:e2e

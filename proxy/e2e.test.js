@@ -1,9 +1,20 @@
 // End-to-end integration test for the geminiProxy Cloud Function.
 //
 // Tier 1 (always runs, no secrets): verifies the deployed proxy's HTTP contract
-//   - GET            -> 405
+//   - GET            -> 200 health
 //   - POST no auth   -> 401
 //   - POST bad auth  -> 401
+//
+// Live contract verified 2026-07 against project taro-ai-502921:
+//   * The LIVE deployed function is named `secureGeminiProxy` and answers at
+//     https://securegeminiproxy-248382356220.us-central1.run.app
+//       - GET            -> 200 {"status":"ok","service":"taro-secure-gemini-proxy"}
+//       - POST no auth   -> 401 {"error":"Unauthorized: missing Bearer token"}
+//       - POST bad auth  -> 401 {"error":"Unauthorized: invalid or expired token"}
+//   * The URL baked into the Android app
+//     (geminiproxy-...-ais-us-east5-...cloudfunctions.net) is DEAD (404) — a
+//     real production bug tracked separately, NOT exercised by this test.
+//   This repo now exports the matching `secureGeminiProxy` implementation.
 //
 // Tier 2 (happy path, runs only if secrets are present): obtains a real Firebase
 //   ID token via Identity Toolkit signInWithPassword, then POSTs a minimal
@@ -18,7 +29,7 @@ const assert = require('node:assert');
 
 const PROXY_URL =
   process.env.PROXY_URL ||
-  'https://geminiproxy-us-central1-ais-us-east5-652628ab15984c6da.cloudfunctions.net';
+  'https://securegeminiproxy-248382356220.us-central1.run.app';
 
 const {
   FIREBASE_WEB_API_KEY,
@@ -34,9 +45,13 @@ const TIER2_READY = Boolean(
 // Tier 1 — contract checks (no secrets)
 // ---------------------------------------------------------------------------
 
-test('Tier1: GET returns 405 (POST-only)', async () => {
+test('Tier1: GET returns the production health contract', async () => {
   const res = await fetch(PROXY_URL, { method: 'GET' });
-  assert.strictEqual(res.status, 405, `expected 405, got ${res.status}`);
+  assert.strictEqual(res.status, 200, `expected 200, got ${res.status}`);
+  assert.deepStrictEqual(await res.json(), {
+    status: 'ok',
+    service: 'taro-secure-gemini-proxy',
+  });
 });
 
 test('Tier1: POST without Authorization returns 401', async () => {
@@ -62,6 +77,13 @@ test('Tier1: POST with malformed/invalid Bearer returns 401', async () => {
 
 // ---------------------------------------------------------------------------
 // Tier 2 — happy path (requires secrets, else skipped)
+//
+// NOTE: even with valid Tier-2 secrets, this currently fails against
+// taro-ai-502921 because that project's Gemini prepayment credits are depleted
+// (upstream returns 429 RESOURCE_EXHAUSTED). Fund the project or use BYOK to get
+// a real 200 + candidates. Model ids gemini-3.5-flash and gemini-3.6-flash were
+// both verified VALID (resolve past model lookup), so the proxy's model mapping
+// is fine — the blocker is billing, not the model id.
 // ---------------------------------------------------------------------------
 
 test(

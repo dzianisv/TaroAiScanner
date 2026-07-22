@@ -1,59 +1,75 @@
-# Mystic Tarot - Gemini API Proxy (GCP Cloud Functions)
+# Taro Secure Gemini Proxy
 
-This directory contains a complete, production-ready **Google Cloud Function** (the Google Cloud equivalent of AWS Lambda) that acts as a secure intermediary between your mobile application and the Gemini API.
+`secureGeminiProxy` is a Firebase Functions v2 HTTP handler for Node.js 22. It keeps provider credentials off the Android device and preserves the Gemini `generateContent` wire contract used by Taro:
 
-## Why use a Proxy?
-Directly calling the Gemini API from a mobile application requires embedding an API key in the client application code or configuration. If your app is decompiled or if requests are intercepted, your API key could be compromised.
+- `GET` returns `{"status":"ok","service":"taro-secure-gemini-proxy"}`.
+- `POST ?model=chat-auto` accepts raw `contents` and optional `generationConfig`.
+- Successful responses are raw Gemini responses with `candidates`.
+- Errors use `{"error":{"message":"..."}}`, which the Android client already parses.
 
-By deploying this lightweight Node.js proxy on **Google Cloud Functions**, you can:
-1. **Secure Your Credentials:** The `GEMINI_API_KEY` remains securely stored in GCP (environment variables or Secret Manager) and is never sent to the device.
-2. **Control Rate Limits & Costs:** Add authentication, rate limiting, or payload validation inside the Cloud Function to protect your Gemini quotas.
-3. **Change Models Dynamically:** Switch Gemini models (e.g., from `gemini-2.5-flash` to `gemini-2.5-pro` or newer) without needing to update and re-publish your Android app.
+## Security and Routing
 
----
+- Every `POST` needs `Authorization: Bearer <Firebase ID token>`.
+- Firebase Auth is the primary verifier. A standard Google ID token is accepted only when a strict `GOOGLE_WEB_CLIENT_ID` audience is configured.
+- Model query values are aliases, not provider model names. Supported aliases are `chat-auto`, `describe-auto`, `scan-auto`, and their `+s` reasoning variants. All aliases resolve to `GENAI_MODEL`.
+- Vertex AI with Application Default Credentials is always attempted first.
+- The Gemini Developer API is attempted only after a retryable Vertex quota or availability failure and only when the `GEMINI_API_KEY` secret is available.
+- Requests are limited to 8 MB after parsing. `contents` must be non-empty. `responseMimeType` is limited to `application/json` or `text/plain`, and `temperature` to `0..2`.
 
-## Deployment Instructions
+The function has a public IAM invoker because mobile clients do not possess Google Cloud IAM tokens. This does not make the application API anonymous: the handler rejects POST requests without a valid application ID token.
 
-### Prerequisites
-1. Installed [Google Cloud SDK (gcloud CLI)](https://cloud.google.com/sdk/docs/install).
-2. A GCP Project with billing enabled.
-3. Your Gemini API Key from Google AI Studio.
+## Local Verification
 
-### Step 1: Initialize your GCP Project
-Open your terminal inside this `/proxy` folder and run:
+From this directory:
+
 ```bash
-# Log in to your Google Account
-gcloud auth login
-
-# Set your active project ID
-gcloud config set project YOUR_GCP_PROJECT_ID
-
-# Enable the required Cloud Functions and Cloud Build APIs
-gcloud services enable cloudfunctions.googleapis.com cloudbuild.googleapis.com
+npm ci
+npm test
+npm run check
+npm run test:e2e
 ```
 
-### Step 2: Deploy to Google Cloud Functions
-Deploy the function using the `gcloud functions deploy` command. Replace `YOUR_ACTUAL_GEMINI_API_KEY` with your real key:
+`npm run test:e2e` always checks the deployed Tier-1 health/auth contract. The authenticated Gemini request runs only when `FIREBASE_WEB_API_KEY`, `TEST_USER_EMAIL`, and `TEST_USER_PASSWORD` are set. Set `PROXY_URL` to test a non-default deployment.
+
+## Google Cloud Setup
+
+Enable the required APIs once:
 
 ```bash
-gcloud functions deploy geminiProxy \
-  --runtime=nodejs18 \
+gcloud services enable \
+  aiplatform.googleapis.com \
+  cloudbuild.googleapis.com \
+  cloudfunctions.googleapis.com \
+  run.googleapis.com \
+  secretmanager.googleapis.com
+```
+
+Grant the function's runtime service account Vertex access:
+
+```bash
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$RUNTIME_SERVICE_ACCOUNT" \
+  --role="roles/aiplatform.user"
+```
+
+Store `GEMINI_API_KEY` in Secret Manager before deployment. Never pass a key with `--set-env-vars` or place one in a tracked file. Follow the organization's secret runbook to create or rotate the secret and grant the runtime service account access.
+
+Deploy from `proxy/` as a second-generation Node.js 22 function:
+
+```bash
+gcloud functions deploy secureGeminiProxy \
+  --gen2 \
+  --runtime=nodejs22 \
+  --region="$REGION" \
+  --source=. \
+  --entry-point=secureGeminiProxy \
   --trigger-http \
   --allow-unauthenticated \
-  --region=us-central1 \
-  --set-env-vars GEMINI_API_KEY=YOUR_ACTUAL_GEMINI_API_KEY \
-  --entry-point=geminiProxy
+  --service-account="$RUNTIME_SERVICE_ACCOUNT" \
+  --set-env-vars="GCLOUD_PROJECT=$PROJECT_ID,VERTEX_LOCATION=global,GENAI_MODEL=gemini-3.6-flash" \
+  --set-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest"
 ```
 
-*Note: `--allow-unauthenticated` makes the function publicly accessible so your Android app can call it. If you want, you can secure it with Firebase App Check or Custom Auth Headers.*
+Add `,GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID` to `--set-env-vars` only when Google OAuth ID-token fallback is needed. Firebase ID-token verification remains enabled without it. Pinning a numbered secret version instead of `latest` is preferable when releases require deterministic rollback.
 
-### Step 3: Copy your Endpoint URL
-Once the deployment completes successfully, the CLI will output an `httpsTrigger` URL, for example:
-`https://us-central1-your-project.cloudfunctions.net/geminiProxy`
-
----
-
-## Android App Integration
-Open your Mystic Tarot app, go to settings or click on the **Oracle Settings** icon in the App, and paste this URL into the **Custom Proxy URL** field. 
-
-The Android app will automatically route all Tarot scanning requests through your secure proxy instead of calling the direct Google API, keeping your secrets perfectly secure!
+No deployment is performed by the test or CI scripts.
