@@ -1,0 +1,46 @@
+name: proxy-e2e
+
+# End-to-end integration test for the geminiProxy Cloud Function.
+#
+# Tier 1 (always runs, no secrets): asserts the deployed proxy enforces its HTTP
+#   contract (GET->405, POST no-auth->401, POST bad-auth->401). This doubles as a
+#   live deployment gate: if the proxy URL is not serving the function, Tier 1
+#   fails.
+#
+# Tier 2 (happy path): runs only when the Firebase secrets below are configured
+#   as GitHub Actions secrets; otherwise it skips gracefully.
+#
+# Required repo secrets/vars for full coverage:
+#   PROXY_URL            (var or secret) - proxy base URL; defaults to the baked-in URL if unset
+#   FIREBASE_WEB_API_KEY (secret)        - Firebase Web API key for signInWithPassword
+#   TEST_USER_EMAIL      (secret)        - a test account email in the Firebase project
+#   TEST_USER_PASSWORD   (secret)        - that account's password
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'proxy/**'
+      - '.github/workflows/proxy-e2e.yml'
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proxy
+    env:
+      PROXY_URL: ${{ vars.PROXY_URL || secrets.PROXY_URL }}
+      FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+      TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+      TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run E2E tests (Tier 1 always; Tier 2 if secrets present)
+        run: npm run test:e2e

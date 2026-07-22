@@ -13,6 +13,7 @@
   },
   "scripts": {
     "start": "firebase emulators:start --only functions",
-    "deploy": "firebase deploy --only functions"
+    "deploy": "firebase deploy --only functions",
+    "test:e2e": "node --test"
   }
 }
