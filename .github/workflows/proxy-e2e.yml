@@ -37,7 +37,9 @@ jobs:
       run:
         working-directory: proxy
     env:
-      PROXY_URL: ${{ vars.PROXY_URL || secrets.PROXY_URL }}
+      # Falls back to the live secureGeminiProxy URL if the repo var/secret is unset,
+      # so CI never silently tests a stale/dead endpoint.
+      PROXY_URL: ${{ vars.PROXY_URL || secrets.PROXY_URL || 'https://securegeminiproxy-248382356220.us-central1.run.app' }}
       FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
       TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
