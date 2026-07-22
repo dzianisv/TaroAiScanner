@@ -6,7 +6,9 @@ const { onRequest } = require("firebase-functions/v2/https");
 const { OAuth2Client } = require("google-auth-library");
 
 if (!getApps().length) {
-  initializeApp();
+  const projectId =
+    process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT;
+  initializeApp(projectId ? { projectId } : undefined);
 }
 
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
