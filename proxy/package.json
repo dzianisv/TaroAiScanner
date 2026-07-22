@@ -14,6 +14,6 @@
   "scripts": {
     "start": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
-    "test:e2e": "node --test"
+    "test:e2e": "node --test e2e.test.js"
   }
 }

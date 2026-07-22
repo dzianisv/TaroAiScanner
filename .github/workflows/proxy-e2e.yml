@@ -11,10 +11,14 @@ name: proxy-e2e
 #   as GitHub Actions secrets; otherwise it skips gracefully.
 #
 # Required repo secrets/vars for full coverage:
-#   PROXY_URL            (var or secret) - proxy base URL; defaults to the baked-in URL if unset
+#   PROXY_URL            (var or secret) - proxy base URL; defaults in e2e.test.js
+#                                          to the live secureGeminiProxy Run URL
 #   FIREBASE_WEB_API_KEY (secret)        - Firebase Web API key for signInWithPassword
 #   TEST_USER_EMAIL      (secret)        - a test account email in the Firebase project
 #   TEST_USER_PASSWORD   (secret)        - that account's password
+#
+# Tier-2 note: even with all secrets set it currently fails because the
+# taro-ai-502921 Gemini prepay credits are depleted (429). Fund/BYOK to go green.
 
 on:
   push:
@@ -22,6 +26,8 @@ on:
     paths:
       - 'proxy/**'
       - '.github/workflows/proxy-e2e.yml'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -41,6 +47,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Install deps (if any)
+        run: npm ci || npm install
 
       - name: Run E2E tests (Tier 1 always; Tier 2 if secrets present)
         run: npm run test:e2e
