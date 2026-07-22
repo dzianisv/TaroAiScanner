@@ -1,6 +1,6 @@
 const { GoogleGenAI } = require("@google/genai");
-const admin = require("firebase-admin");
 const { getApps, initializeApp } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 const { defineSecret } = require("firebase-functions/params");
 const { onRequest } = require("firebase-functions/v2/https");
 const { OAuth2Client } = require("google-auth-library");
@@ -199,7 +199,7 @@ function productionDependencies() {
   return {
     env: process.env,
     logger: console,
-    verifyFirebaseToken: (token) => admin.auth().verifyIdToken(token),
+    verifyFirebaseToken: (token) => getAuth().verifyIdToken(token),
     verifyGoogleToken: async (token, audience) => {
       const ticket = await oauth2Client.verifyIdToken({ idToken: token, audience });
       return ticket.getPayload();
