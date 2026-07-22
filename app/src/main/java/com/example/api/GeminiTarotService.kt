@@ -4,10 +4,12 @@ import android.graphics.Bitmap
 import android.util.Base64
 import com.example.BuildConfig
 import com.example.data.TarotReading
+import com.example.data.TarotDeck
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -19,8 +21,16 @@ import java.util.concurrent.TimeUnit
 
 object GeminiTarotService {
 
-    private const val MODEL_NAME = "gemini-3.5-flash"
-    private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
+    const val MODEL_CHAT = "chat-auto"
+    const val MODEL_DESCRIBE = "describe-auto"
+    const val MODEL_SCAN = "scan-auto"
+
+    private fun resolveDirectModelName(modelAlias: String): String {
+        return when (modelAlias) {
+            MODEL_CHAT, MODEL_DESCRIBE, MODEL_SCAN -> "gemini-3.6-flash"
+            else -> modelAlias
+        }
+    }
 
     private val moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
@@ -32,6 +42,20 @@ object GeminiTarotService {
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    // Shorter, non-blocking timeouts for quick user interactions
+    private val textClient = client.newBuilder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.SECONDS)
+        .build()
+
+    // Medium timeouts for image scanning operations
+    private val scanClient = client.newBuilder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(12, TimeUnit.SECONDS)
         .build()
 
     private fun Bitmap.toBase64(): String {
@@ -54,8 +78,15 @@ object GeminiTarotService {
     suspend fun analyzeTarotCard(
         bitmap: Bitmap,
         promptContext: String = "Single Card Draw",
-        proxyUrl: String = ""
+        proxyUrl: String = "",
+        offlineMode: Boolean = false,
+        customApiKey: String = "",
+        idToken: String = ""
     ): TarotReading? = withContext(Dispatchers.IO) {
+        if (offlineMode) {
+            return@withContext getMockReading("The Star", "Upright")
+        }
+
         val base64Image = bitmap.toBase64()
 
         val prompt = """
@@ -106,23 +137,29 @@ object GeminiTarotService {
         // Build request depending on proxy configuration
         val requestUrl = if (proxyUrl.isNotEmpty()) {
             val separator = if (proxyUrl.contains("?")) "&" else "?"
-            "$proxyUrl${separator}model=$MODEL_NAME"
+            "$proxyUrl${separator}model=$MODEL_SCAN"
         } else {
-            val apiKey = BuildConfig.GEMINI_API_KEY
+            val apiKey = if (customApiKey.isNotEmpty()) customApiKey else BuildConfig.GEMINI_API_KEY
             if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
                 // Return fallback reading immediately if no direct API key and no proxy configured
                 return@withContext getMockReading("The Star", "Upright")
             }
-            "$BASE_URL?key=$apiKey"
+            val targetModel = resolveDirectModelName(MODEL_SCAN)
+            "https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent?key=$apiKey"
         }
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(requestUrl)
             .post(requestBody)
-            .build()
+
+        if (proxyUrl.isNotEmpty() && idToken.isNotEmpty()) {
+            requestBuilder.header("Authorization", "Bearer $idToken")
+        }
+
+        val request = requestBuilder.build()
 
         try {
-            val response = client.newCall(request).execute()
+            val response = scanClient.newCall(request).execute()
             if (!response.isSuccessful) {
                 val errorBody = response.body?.string()
                 val errorMessage = try {
@@ -150,15 +187,245 @@ object GeminiTarotService {
         }
     }
 
+    suspend fun interpretVirtualCard(
+        cardName: String,
+        orientation: String,
+        spreadType: String = "Single Card Draw",
+        proxyUrl: String = "",
+        offlineMode: Boolean = false,
+        customApiKey: String = "",
+        idToken: String = ""
+    ): TarotReading? = withContext(Dispatchers.IO) {
+        if (offlineMode) {
+            return@withContext getMockReading(cardName, orientation)
+        }
+
+        val prompt = """
+            You are a wise and highly intuitive, professional Tarot Card Reader. 
+            Interpret the drawn virtual card: $cardName in its $orientation position.
+            Context of the reading: $spreadType.
+            
+            Return your complete response strictly as a JSON object matching this exact schema:
+            {
+              "cardName": "$cardName",
+              "orientation": "$orientation",
+              "summary": "A beautiful 1-sentence summary of the card's energy today",
+              "generalMeaning": "Detailed paragraph exploring the general interpretation and psychological/spiritual archetype of this card",
+              "advice": "Actionable positive guidance/steps for the seeker based on this card",
+              "warning": "A gentle warning or pitfall to avoid under this card's energy",
+              "luckyElements": ["A lucky color", "A lucky hour or time", "A key number", "An aligned element or astrological sign"]
+            }
+            Do not include any other markdown, text or explanation outside the JSON. Return only valid raw JSON.
+        """.trimIndent()
+
+        val requestJson = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("text", prompt)
+                        })
+                    })
+                })
+            })
+            put("generationConfig", JSONObject().apply {
+                put("responseMimeType", "application/json")
+                put("temperature", 0.7)
+            })
+        }
+
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val requestBody = requestJson.toString().toRequestBody(mediaType)
+
+        val requestUrl = if (proxyUrl.isNotEmpty()) {
+            val separator = if (proxyUrl.contains("?")) "&" else "?"
+            "$proxyUrl${separator}model=$MODEL_DESCRIBE"
+        } else {
+            val apiKey = if (customApiKey.isNotEmpty()) customApiKey else BuildConfig.GEMINI_API_KEY
+            if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
+                return@withContext getMockReading(cardName, orientation)
+            }
+            val targetModel = resolveDirectModelName(MODEL_DESCRIBE)
+            "https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent?key=$apiKey"
+        }
+
+        val requestBuilder = Request.Builder()
+            .url(requestUrl)
+            .post(requestBody)
+
+        if (proxyUrl.isNotEmpty() && idToken.isNotEmpty()) {
+            requestBuilder.header("Authorization", "Bearer $idToken")
+        }
+
+        val request = requestBuilder.build()
+
+        try {
+            val result = withTimeoutOrNull(10000) {
+                val response = textClient.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string()
+                    val errorMessage = try {
+                        JSONObject(errorBody).getJSONObject("error").getString("message")
+                    } catch (e: Exception) {
+                        "HTTP ${response.code}: ${response.message}"
+                    }
+                    throw Exception(errorMessage)
+                }
+                val responseBody = response.body?.string() ?: return@withTimeoutOrNull null
+                val responseJson = JSONObject(responseBody)
+                
+                val candidates = responseJson.optJSONArray("candidates")
+                val text = candidates?.optJSONObject(0)
+                    ?.optJSONObject("content")
+                    ?.optJSONArray("parts")
+                    ?.optJSONObject(0)
+                    ?.optString("text") ?: return@withTimeoutOrNull null
+
+                val cleanedJson = cleanJsonBody(text)
+                tarotAdapter.fromJson(cleanedJson)
+            }
+            return@withContext result ?: getMockReading(cardName, orientation)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext getMockReading(cardName, orientation)
+        }
+    }
+
+    suspend fun chatWithTarotMaster(
+        history: List<com.example.data.TarotChatMessageEntity>,
+        newMessageText: String,
+        attachedMimeType: String? = null,
+        attachedBytes: ByteArray? = null,
+        proxyUrl: String = "",
+        offlineMode: Boolean = false,
+        customApiKey: String = "",
+        idToken: String = ""
+    ): String? = withContext(Dispatchers.IO) {
+        if (offlineMode) {
+            return@withContext "The celestial paths are quiet today. In offline mode, the oracle reflects your own inner light. Contemplate your current card draws for guidance, or toggle Online Mode to engage the Gemini AI."
+        }
+
+        val contentsArray = JSONArray()
+
+        val systemPrompt = "You are a wise, highly intuitive, compassionate professional Tarot Master. " +
+                "Guide the seeker with ancient tarot wisdom, modern psychology, and celestial insight. " +
+                "Be mysterious yet practical. Keep your answers beautifully structured, readable, and under 3 paragraphs."
+
+        // Add history
+        history.forEach { msg ->
+            val role = if (msg.sender == "user") "user" else "model"
+            contentsArray.put(JSONObject().apply {
+                put("role", role)
+                put("parts", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("text", msg.text)
+                    })
+                })
+            })
+        }
+
+        // Add the new user message
+        contentsArray.put(JSONObject().apply {
+            put("role", "user")
+            put("parts", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("text", "$systemPrompt\n\nSeeker: $newMessageText")
+                })
+                
+                if (attachedBytes != null && attachedMimeType != null) {
+                    val base64Data = Base64.encodeToString(attachedBytes, Base64.NO_WRAP)
+                    put(JSONObject().apply {
+                        put("inlineData", JSONObject().apply {
+                            put("mimeType", attachedMimeType)
+                            put("data", base64Data)
+                        })
+                    })
+                }
+            })
+        })
+
+        val requestJson = JSONObject().apply {
+            put("contents", contentsArray)
+            put("generationConfig", JSONObject().apply {
+                put("temperature", 0.7)
+            })
+        }
+
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val requestBody = requestJson.toString().toRequestBody(mediaType)
+
+        val requestUrl = if (proxyUrl.isNotEmpty()) {
+            val separator = if (proxyUrl.contains("?")) "&" else "?"
+            "$proxyUrl${separator}model=$MODEL_CHAT"
+        } else {
+            val apiKey = if (customApiKey.isNotEmpty()) customApiKey else BuildConfig.GEMINI_API_KEY
+            if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
+                return@withContext "The cosmic link is quiet. Connect to your direct Gemini API key or proxy to begin your chat."
+            }
+            val targetModel = resolveDirectModelName(MODEL_CHAT)
+            "https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent?key=$apiKey"
+        }
+
+        val requestBuilder = Request.Builder()
+            .url(requestUrl)
+            .post(requestBody)
+
+        if (proxyUrl.isNotEmpty() && idToken.isNotEmpty()) {
+            requestBuilder.header("Authorization", "Bearer $idToken")
+        }
+
+        val request = requestBuilder.build()
+
+        try {
+            val response = textClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                val errorBody = response.body?.string()
+                val errorMessage = try {
+                    JSONObject(errorBody).getJSONObject("error").getString("message")
+                } catch (e: Exception) {
+                    "HTTP ${response.code}: ${response.message}"
+                }
+                throw Exception(errorMessage)
+            }
+            val responseBody = response.body?.string() ?: return@withContext null
+            val responseJson = JSONObject(responseBody)
+            
+            val candidates = responseJson.optJSONArray("candidates")
+            val text = candidates?.optJSONObject(0)
+                ?.optJSONObject("content")
+                ?.optJSONArray("parts")
+                ?.optJSONObject(0)
+                ?.optString("text")
+            
+            text
+        } catch (e: Exception) {
+            e.printStackTrace()
+            "The ethereal connection was interrupted: ${e.localizedMessage}"
+        }
+    }
+
     private fun getMockReading(name: String, orientation: String): TarotReading {
+        val card = TarotDeck.majorArcana.firstOrNull { it.name.equals(name, ignoreCase = true) }
+            ?: TarotDeck.majorArcana.first()
+        
+        val meaning = if (orientation.equals("Upright", ignoreCase = true)) card.uprightMeaning else card.reversedMeaning
+        val summaryStr = "The energies of ${card.name} (${orientation}) flow around your life questions today, carrying ${card.keywords.take(2).joinToString(" and ").lowercase()}."
+        
+        val luckyColors = listOf("Mystic Purple", "Celestial Blue", "Golden Aurum", "Crimson Flame", "Emerald Dawn", "Midnight Velvet")
+        val luckyHours = listOf("3:33 AM", "11:11 AM", "7:07 PM", "12:12 PM", "8:08 AM", "10:10 PM")
+        
+        val color = luckyColors.random()
+        val hour = luckyHours.random()
+        val number = "Number ${(1..22).random()}"
+        
         return TarotReading(
-            cardName = name,
+            cardName = card.name,
             orientation = orientation,
-            summary = "Hope, faith, and cosmic alignment are guiding your path forward today.",
-            generalMeaning = "The Star brings renewed hope, faith, and a sense of being blessed by the universe. It suggests that you are entering a period of spiritual healing and peace after a time of trials. Your inner light is shining bright, and you are being called to trust the natural flow of your life.",
-            advice = "Open your heart to healing. Trust your intuition and follow the gentle tugs of your inspiration.",
-            warning = "Avoid slipping into passive dreaming; remember to take real-world action to anchor your visions.",
-            luckyElements = listOf("Midnight Blue", "11:11 PM", "Number 17", "Aquarius / Air")
+            summary = summaryStr,
+            generalMeaning = meaning,
+            advice = "Meditate on the archetype of ${card.name} (${orientation}). Use its wisdom to ${card.keywords.last().lowercase()}.",
+            warning = "Beware of over-relying on superficial solutions. Real transformation requires balancing ${card.element} energies.",
+            luckyElements = listOf(color, hour, number, "${card.astrologicalSign} / ${card.element}")
         )
     }
 }

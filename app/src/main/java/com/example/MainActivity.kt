@@ -21,6 +21,8 @@ import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.TarotDashboardScreen
 import com.example.ui.screens.TarotScannerScreen
 import com.example.ui.screens.ReadingResultScreen
+import com.example.ui.screens.TarotChatScreen
+import com.example.ui.screens.TarotVirtualDrawScreen
 import com.example.ui.viewmodel.TarotViewModel
 import com.example.ui.viewmodel.TarotViewModelFactory
 import com.example.ui.theme.MyApplicationTheme
@@ -60,9 +62,34 @@ class MainActivity : ComponentActivity() {
                             composable("dashboard") {
                                 TarotDashboardScreen(
                                     viewModel = tarotViewModel,
-                                    onSelectSpread = { spreadId ->
+                                    onScanCard = { spreadId ->
                                         tarotViewModel.setSpreadType(spreadId)
                                         navController.navigate("scanner")
+                                    },
+                                    onNavToChat = {
+                                        navController.navigate("chat")
+                                    },
+                                    onNavToVirtualDraw = {
+                                        navController.navigate("virtual_draw")
+                                    }
+                                )
+                            }
+                            composable("chat") {
+                                TarotChatScreen(
+                                    viewModel = tarotViewModel,
+                                    onBack = {
+                                        navController.popBackStack()
+                                    }
+                                )
+                            }
+                            composable("virtual_draw") {
+                                TarotVirtualDrawScreen(
+                                    viewModel = tarotViewModel,
+                                    onBack = {
+                                        navController.popBackStack()
+                                    },
+                                    onNavToReading = {
+                                        navController.navigate("reading")
                                     }
                                 )
                             }

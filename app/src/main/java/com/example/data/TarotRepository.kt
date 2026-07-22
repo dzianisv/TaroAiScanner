@@ -5,7 +5,11 @@ import kotlinx.coroutines.flow.map
 
 class TarotRepository(private val tarotDao: TarotDao) {
 
-    val allReadings: Flow<List<TarotReadingEntity>> = tarotDao.getAllReadings()
+    fun getReadingsForUser(userId: String): Flow<List<TarotReadingEntity>> =
+        tarotDao.getAllReadingsForUser(userId)
+    
+    fun getChatMessagesForUser(userId: String): Flow<List<TarotChatMessageEntity>> =
+        tarotDao.getAllChatMessagesForUser(userId)
     
     val settingsFlow: Flow<TarotSettingsEntity> = tarotDao.getSettingsFlow().map { 
         it ?: TarotSettingsEntity() 
@@ -19,8 +23,16 @@ class TarotRepository(private val tarotDao: TarotDao) {
         tarotDao.deleteReading(id)
     }
 
-    suspend fun clearHistory() {
-        tarotDao.clearHistory()
+    suspend fun clearHistoryForUser(userId: String) {
+        tarotDao.clearHistoryForUser(userId)
+    }
+
+    suspend fun saveChatMessage(message: TarotChatMessageEntity) {
+        tarotDao.insertChatMessage(message)
+    }
+
+    suspend fun clearChatHistoryForUser(userId: String) {
+        tarotDao.clearChatHistoryForUser(userId)
     }
 
     suspend fun getSettingsDirect(): TarotSettingsEntity {
@@ -36,15 +48,37 @@ class TarotRepository(private val tarotDao: TarotDao) {
         tarotDao.saveSettings(current.copy(proxyUrl = url))
     }
 
-    suspend fun updateUserProfile(email: String, name: String, photoUrl: String, isSignedIn: Boolean) {
+    suspend fun updateOfflineMode(offline: Boolean) {
+        val current = getSettingsDirect()
+        tarotDao.saveSettings(current.copy(offlineMode = offline))
+    }
+
+    suspend fun updateCustomApiKey(key: String) {
+        val current = getSettingsDirect()
+        tarotDao.saveSettings(current.copy(customApiKey = key))
+    }
+
+    suspend fun updateUserProfile(email: String, name: String, photoUrl: String, isSignedIn: Boolean, isGuest: Boolean = false, idToken: String = "") {
         val current = getSettingsDirect()
         tarotDao.saveSettings(
             current.copy(
                 signedInEmail = email,
                 signedInName = name,
                 signedInPhotoUrl = photoUrl,
-                isSignedIn = isSignedIn
+                isSignedIn = isSignedIn,
+                isGuest = isGuest,
+                idToken = idToken
             )
         )
+    }
+
+    suspend fun updateIdToken(token: String) {
+        val current = getSettingsDirect()
+        tarotDao.saveSettings(current.copy(idToken = token))
+    }
+
+    suspend fun mergeGuestHistory(newUserId: String) {
+        tarotDao.mergeGuestReadings(newUserId)
+        tarotDao.mergeGuestChatMessages(newUserId)
     }
 }

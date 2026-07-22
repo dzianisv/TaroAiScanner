@@ -1,46 +1,65 @@
-const functions = require('@google-cloud/functions-framework');
-const axios = require('axios');
+const { onRequest } = require("firebase-functions/v2/https");
+const admin = require("firebase-admin");
+const axios = require("axios");
 
-// Enable CORS for pre-flight and standard requests
-const handleCors = (req, res) => {
-  res.set('Access-Control-Allow-Origin', '*');
-  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') {
-    res.status(204).send('');
-    return true;
-  }
-  return false;
-};
+// Initialize Firebase Admin SDK
+admin.initializeApp();
 
 /**
- * HTTP Cloud Function that acts as a secure proxy to the Gemini API.
- * This prevents exposing the GEMINI_API_KEY inside the mobile client binary.
+ * Secure Firebase Cloud Function acting as a proxy to the Gemini API.
+ * Requires a valid Firebase Auth ID Token in the Authorization header.
  */
-functions.http('geminiProxy', async (req, res) => {
-  if (handleCors(req, res)) return;
-
+exports.geminiProxy = onRequest({ cors: true, timeoutSeconds: 60 }, async (req, res) => {
+  // 1. Only support POST requests
   if (req.method !== 'POST') {
     return res.status(405).json({
       error: { message: 'Only POST requests are supported.' }
     });
   }
 
-  // Fetch the API Key from the Cloud Function environment variables
+  // 2. Validate Authorization Header (Firebase Auth ID Token)
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.warn('Unauthorized request: Missing or malformed Authorization header.');
+    return res.status(401).json({
+      error: { message: 'Unauthorized: Missing or malformed Firebase Auth credentials.' }
+    });
+  }
+
+  const idToken = authHeader.split('Bearer ')[1];
+  try {
+    // Verify the ID Token using Firebase Admin SDK
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    console.log(`Authenticated request from user UID: ${decodedToken.uid}`);
+  } catch (authError) {
+    console.error('Authentication verification failed:', authError.message);
+    return res.status(401).json({
+      error: { message: `Unauthorized: Invalid Firebase Auth credentials. ${authError.message}` }
+    });
+  }
+
+  // 3. Retrieve the Gemini API Key from server environment / secrets
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.error('CRITICAL: GEMINI_API_KEY environment variable is missing.');
+    console.error('CRITICAL: GEMINI_API_KEY environment variable is missing on the server.');
     return res.status(500).json({
       error: { message: 'Proxy configuration error: API Key is missing on the server.' }
     });
   }
 
-  // Default to gemini-2.5-flash unless specified
-  const modelName = req.query.model || 'gemini-2.5-flash';
-  const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+  // 4. Retrieve model alias from query parameter and map to concrete model
+  const MODEL_MAPPING = {
+    "chat-auto": "gemini-3.6-flash",
+    "describe-auto": "gemini-3.6-flash",
+    "scan-auto": "gemini-3.6-flash"
+  };
+
+  const requestedModel = req.query.model || 'chat-auto';
+  const targetModel = MODEL_MAPPING[requestedModel] || requestedModel || 'gemini-3.6-flash';
+  const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
 
   try {
-    console.log(`Forwarding request to Gemini API for model: ${modelName}`);
+    console.log(`Forwarding authenticated request to Gemini API (usecase: ${requestedModel} -> model: ${targetModel})`);
     
     const response = await axios.post(targetUrl, req.body, {
       headers: {
@@ -55,15 +74,12 @@ functions.http('geminiProxy', async (req, res) => {
     console.error('Error proxying request to Gemini API:', error.message);
     
     if (error.response) {
-      // The request was made and the server responded with a status code outside the 2xx range
       return res.status(error.response.status).json(error.response.data);
     } else if (error.request) {
-      // The request was made but no response was received
       return res.status(504).json({
         error: { message: 'Gateway Timeout: No response received from Gemini API.' }
       });
     } else {
-      // Something else happened in setting up the request
       return res.status(500).json({
         error: { message: `Internal Proxy Error: ${error.message}` }
       });

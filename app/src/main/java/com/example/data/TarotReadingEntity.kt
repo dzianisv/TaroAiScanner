@@ -9,6 +9,7 @@ import com.squareup.moshi.Types
 @Entity(tableName = "tarot_readings")
 data class TarotReadingEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val userId: String = "guest",
     val cardName: String,
     val orientation: String,
     val summary: String,

@@ -21,11 +21,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.viewmodel.TarotViewModel
 
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.clickable
+
 @Composable
 fun AuthScreen(
     viewModel: TarotViewModel
 ) {
     val context = LocalContext.current
+    val isAuthLoading by viewModel.isAuthLoading.collectAsState()
+    val authError by viewModel.authError.collectAsState()
 
     Box(
         modifier = Modifier
@@ -102,13 +109,53 @@ fun AuthScreen(
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
 
-            Spacer(modifier = Modifier.height(56.dp))
+            Spacer(modifier = Modifier.height(40.dp))
+
+            // Auth Error Panel
+            if (authError != null) {
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2C1625)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
+                        .border(1.dp, Color(0xFFEF5350).copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .clickable { viewModel.clearAuthError() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "Error",
+                            tint = Color(0xFFEF5350),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Authentication Error",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFEF5350)
+                            )
+                            Text(
+                                authError ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFE5B9B9)
+                            )
+                        }
+                    }
+                }
+            }
 
             // Google Sign In Button
             Button(
-                onClick = { viewModel.handleGoogleSignIn(context) },
+                onClick = { if (!isAuthLoading) viewModel.handleGoogleSignIn(context) },
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                 shape = RoundedCornerShape(16.dp),
+                enabled = !isAuthLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
@@ -121,8 +168,16 @@ fun AuthScreen(
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    if (isAuthLoading) {
+                        CircularProgressIndicator(
+                            color = Color.Black,
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                    }
                     Text(
-                        text = "Sign in with Google",
+                        text = if (isAuthLoading) "Connecting to Oracle..." else "Sign in with Google",
                         color = Color.Black,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
@@ -133,27 +188,33 @@ fun AuthScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Apple Sign In Button
-            Button(
-                onClick = { viewModel.handleAppleSignIn() },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F081D)),
+            // Continue as Guest Button
+            OutlinedButton(
+                onClick = { if (!isAuthLoading) viewModel.handleGuestSignIn() },
                 shape = RoundedCornerShape(16.dp),
+                enabled = !isAuthLoading,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB1A2C9)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFB1A2C9).copy(alpha = 0.4f)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
-                    .border(1.dp, Color(0xFFD4AF37), RoundedCornerShape(16.dp))
-                    .testTag("apple_signin_button"),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+                    .testTag("guest_signin_button")
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = Color(0xFFB1A2C9).copy(alpha = 0.8f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Sign in with Apple",
-                        color = Color(0xFFD4AF37),
-                        fontWeight = FontWeight.Bold,
+                        text = "Continue as Guest",
+                        fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
                         letterSpacing = 0.5.sp
                     )
