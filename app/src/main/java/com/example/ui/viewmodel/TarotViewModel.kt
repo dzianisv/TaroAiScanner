@@ -28,6 +28,27 @@ sealed class TarotUIState {
 
 class TarotViewModel(private val repository: TarotRepository) : ViewModel() {
 
+    companion object {
+        /** Free-tier: total readings allowed before premium is required. */
+        const val FREE_READING_QUOTA = 3
+    }
+
+    // Premium entitlement (fed from BillingManager.isPremium; default false)
+    private val _isPremium = MutableStateFlow(false)
+    val isPremium: StateFlow<Boolean> = _isPremium.asStateFlow()
+
+    /** Wire the BillingManager entitlement flow into this ViewModel. */
+    fun bindPremiumFlow(flow: StateFlow<Boolean>) {
+        viewModelScope.launch {
+            flow.collect { _isPremium.value = it }
+        }
+    }
+
+    /** True if the user may perform another reading (premium, or under free quota). */
+    fun canDoReading(): Boolean =
+        _isPremium.value || historyState.value.size < FREE_READING_QUOTA
+
+
     // Reading flow state
     private val _uiState = MutableStateFlow<TarotUIState>(TarotUIState.Idle)
     val uiState: StateFlow<TarotUIState> = _uiState.asStateFlow()
