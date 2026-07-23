@@ -301,7 +301,7 @@ class TarotViewModel(private val repository: TarotRepository) : ViewModel() {
                 val credentialManager = CredentialManager.create(context)
                 
                 val googleIdOption = GetGoogleIdOption.Builder()
-                    .setServerClientId("dummy_web_client_id_for_flow.apps.googleusercontent.com")
+                    .setServerClientId("248382356220-r6rc4lcskohiarh07v5qptu2pcamnnbs.apps.googleusercontent.com")
                     .setFilterByAuthorizedAccounts(false)
                     .setAutoSelectEnabled(false)
                     .build()

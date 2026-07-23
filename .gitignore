@@ -16,3 +16,12 @@
 local.properties
 .env
 debug.keystore
+app/google-services.json
+my-upload-key.jks
+keystore.properties
+
+.supervisor/
+thoughts/
+build-release.sh
+distribute-firebase.sh
+firebase-debug.log
