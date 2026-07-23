@@ -187,10 +187,25 @@ async function authenticate(token, dependencies) {
   }
 }
 
+// Vertex AI requires every `contents` entry to declare a role ("user" | "model").
+// The Generative Language API tolerates parts-only entries, but Vertex rejects
+// them with HTTP 400 "Please use a valid role: user, model." The Taro Android
+// client sends parts-only bodies, so normalize here to keep the wire contract
+// backward-compatible while satisfying Vertex.
+function normalizeContents(contents) {
+  if (!Array.isArray(contents)) return contents;
+  return contents.map((entry) => {
+    if (entry && typeof entry === "object" && !Array.isArray(entry) && !entry.role) {
+      return { ...entry, role: "user" };
+    }
+    return entry;
+  });
+}
+
 async function generate(client, model, body) {
   return client.models.generateContent({
     model,
-    contents: body.contents,
+    contents: normalizeContents(body.contents),
     config: body.generationConfig,
   });
 }
@@ -308,6 +323,7 @@ Object.defineProperty(exports, "_test", {
   value: {
     createHandler,
     isRetryableProviderError,
+    normalizeContents,
     normalizeModelAlias,
     validateRequestBody,
   },
