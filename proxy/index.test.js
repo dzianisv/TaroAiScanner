@@ -4,6 +4,7 @@ const { test } = require("node:test");
 const {
   createHandler,
   isRetryableProviderError,
+  normalizeContents,
   normalizeModelAlias,
   validateRequestBody,
 } = require("./index")._test;
@@ -161,8 +162,31 @@ test("raw request config is translated to SDK config and raw response is returne
   });
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body, upstream);
-  assert.deepEqual(calls[0].contents, request().body.contents);
+  // Vertex requires a role on each content entry; the proxy injects role:"user"
+  // for parts-only bodies (the Taro client shape) before forwarding.
+  assert.deepEqual(calls[0].contents, [{ role: "user", parts: [{ text: "Read this card" }] }]);
   assert.deepEqual(calls[0].config, request().body.generationConfig);
+});
+
+test("parts-only contents get role:user injected; existing roles preserved", () => {
+  assert.deepEqual(
+    normalizeContents([{ parts: [{ text: "hi" }] }]),
+    [{ role: "user", parts: [{ text: "hi" }] }],
+  );
+  assert.deepEqual(
+    normalizeContents([{ role: "model", parts: [{ text: "hi" }] }]),
+    [{ role: "model", parts: [{ text: "hi" }] }],
+  );
+  assert.deepEqual(
+    normalizeContents([
+      { parts: [{ text: "a" }] },
+      { role: "model", parts: [{ text: "b" }] },
+    ]),
+    [
+      { role: "user", parts: [{ text: "a" }] },
+      { role: "model", parts: [{ text: "b" }] },
+    ],
+  );
 });
 
 test("validation preserves multimodal parts and rejects unsafe configuration", () => {
