@@ -23,7 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * Wraps Google Play Billing for the "premium_monthly" subscription.
+ * Wraps Google Play Billing for the "mystic_tarot_premium_monthly" subscription.
  *
  * Lifecycle: construct once (e.g. in MainActivity), call [startConnection], and
  * [endConnection] when done. Observe [isPremium] for entitlement and [priceText]
@@ -33,7 +33,7 @@ class BillingManager(context: Context) : PurchasesUpdatedListener {
 
     companion object {
         const val TAG = "BillingManager"
-        const val PREMIUM_MONTHLY = "premium_monthly"
+        const val PREMIUM_MONTHLY = "mystic_tarot_premium_monthly"
         private const val MAX_RETRIES = 3
     }
 
