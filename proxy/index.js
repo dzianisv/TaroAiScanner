@@ -319,9 +319,84 @@ exports.secureGeminiProxy = onRequest(
   createHandler(),
 );
 
+// ---------------------------------------------------------------------------
+// Server-side subscription entitlement verification.
+//
+// The Android client (BillingManager.kt) POSTs { purchaseToken, productId }
+// with its Firebase ID token as a Bearer credential AFTER Play reports a
+// PURCHASED subscription. This endpoint re-checks the token against the Google
+// Play Developer API (purchases.subscriptionsv2.get) so entitlement is granted
+// from an authoritative server response, not from a client-forgeable local
+// state check.
+//
+// Auth reuses the same Firebase/Google token verification as the Gemini proxy.
+// Runtime service account must hold the "androidpublisher" IAM role and have
+// Play Console "Enable API access" linked, or Play calls fail with 403.
+//
+// Business logic lives in lib/verifySubscription.js for testability.
+const { verifyPurchase } = require("./lib/verifySubscription");
+
+function createVerifyHandler(overrides = {}) {
+  const dependencies = { ...productionDependencies(), ...overrides };
+  const verify = dependencies.verifyPurchase || verifyPurchase;
+
+  return async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    res.set("Access-Control-Max-Age", "3600");
+
+    if (req.method === "OPTIONS") return res.status(204).send("");
+    if (req.method !== "POST") {
+      return res.status(405).json(nestedError("Method not allowed."));
+    }
+
+    const authorization = req.headers && req.headers.authorization;
+    const bearer = typeof authorization === "string"
+      ? authorization.match(/^Bearer ([^\s]+)$/)
+      : null;
+    if (!bearer) {
+      return res.status(401).json(nestedError("Unauthorized: missing Bearer token."));
+    }
+
+    try {
+      await authenticate(bearer[1], dependencies);
+    } catch {
+      return res.status(401).json(nestedError("Unauthorized: invalid or expired token."));
+    }
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const purchaseToken = typeof body.purchaseToken === "string"
+      ? body.purchaseToken.trim()
+      : "";
+    if (!purchaseToken) {
+      return res.status(400).json(nestedError("Missing required 'purchaseToken' string."));
+    }
+
+    try {
+      const result = await verify(purchaseToken);
+      return res.status(200).json(result);
+    } catch (error) {
+      dependencies.logger.error("verifySubscription Play API error.", {
+        message: error && error.message,
+      });
+      return res.status(502).json(nestedError("Failed to verify subscription with Google Play."));
+    }
+  };
+}
+
+exports.verifySubscription = onRequest(
+  {
+    cors: true,
+    timeoutSeconds: 30,
+  },
+  createVerifyHandler(),
+);
+
 Object.defineProperty(exports, "_test", {
   value: {
     createHandler,
+    createVerifyHandler,
     isRetryableProviderError,
     normalizeContents,
     normalizeModelAlias,

@@ -15,8 +15,8 @@
   "scripts": {
     "start": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
-    "test": "node --test index.test.js",
+    "test": "node --test index.test.js verifySubscription.test.js",
     "test:e2e": "node --test e2e.test.js",
-    "check": "node --check index.js && node --check index.test.js && node --check e2e.test.js"
+    "check": "node --check index.js && node --check lib/verifySubscription.js && node --check index.test.js && node --check verifySubscription.test.js && node --check e2e.test.js"
   }
 }

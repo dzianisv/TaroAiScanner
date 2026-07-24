@@ -17,6 +17,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.billing.BillingManager
+import com.example.billing.HttpEntitlementVerifier
 import com.example.data.TarotDatabase
 import com.example.data.TarotRepository
 import com.example.ui.screens.AuthScreen
@@ -29,6 +30,8 @@ import com.example.ui.screens.TarotVirtualDrawScreen
 import com.example.ui.viewmodel.TarotViewModel
 import com.example.ui.viewmodel.TarotViewModelFactory
 import com.example.ui.theme.MyApplicationTheme
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.tasks.await
 
 class MainActivity : ComponentActivity() {
 
@@ -39,7 +42,23 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         // BillingClient needs an Activity for launchBillingFlow; hold it here.
-        billingManager = BillingManager(this)
+        // Entitlement is confirmed server-side via the verifySubscription proxy
+        // endpoint, using the configured proxy URL + a fresh Firebase ID token.
+        val entitlementVerifier = HttpEntitlementVerifier(
+            proxyUrlProvider = {
+                val database = TarotDatabase.getDatabase(applicationContext)
+                TarotRepository(database.tarotDao()).getSettingsDirect().proxyUrl
+            },
+            idTokenProvider = {
+                try {
+                    FirebaseAuth.getInstance().currentUser
+                        ?.getIdToken(false)?.await()?.token ?: ""
+                } catch (e: Exception) {
+                    ""
+                }
+            },
+        )
+        billingManager = BillingManager(this, entitlementVerifier)
         billingManager.startConnection()
 
         setContent {

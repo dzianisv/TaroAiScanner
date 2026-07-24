@@ -28,8 +28,18 @@ import kotlinx.coroutines.launch
  * Lifecycle: construct once (e.g. in MainActivity), call [startConnection], and
  * [endConnection] when done. Observe [isPremium] for entitlement and [priceText]
  * for the localized price string.
+ *
+ * Entitlement is confirmed server-side: after Play reports a PURCHASED
+ * subscription, [entitlementVerifier] re-checks the purchase token against the
+ * Google Play Developer API (via the proxy's `verifySubscription` endpoint). An
+ * authoritative `verified == false` revokes entitlement; an inconclusive result
+ * (network error, no verifier) leaves the local grant in place so paying users
+ * are never punished for a transient backend failure.
  */
-class BillingManager(context: Context) : PurchasesUpdatedListener {
+class BillingManager(
+    context: Context,
+    private val entitlementVerifier: EntitlementVerifier? = null,
+) : PurchasesUpdatedListener {
 
     companion object {
         const val TAG = "BillingManager"
@@ -199,6 +209,32 @@ class BillingManager(context: Context) : PurchasesUpdatedListener {
             billingClient.acknowledgePurchase(params) { result ->
                 if (result.responseCode != BillingClient.BillingResponseCode.OK) {
                     Log.w(TAG, "acknowledge failed: ${result.debugMessage}")
+                }
+            }
+        }
+        verifyEntitlement(purchase)
+    }
+
+    /**
+     * Confirm the purchase server-side. Runs after the local grant so the UI is
+     * responsive, but an authoritative negative from Play revokes entitlement.
+     * Inconclusive results (verifier absent, network/backend failure → null)
+     * leave the local grant untouched.
+     */
+    private fun verifyEntitlement(purchase: Purchase) {
+        val verifier = entitlementVerifier ?: return
+        if (purchase.purchaseToken.isBlank()) return
+        val productId = purchase.products.firstOrNull() ?: PREMIUM_MONTHLY
+        scope.launch {
+            val result = verifier.verify(purchase.purchaseToken, productId)
+            when {
+                result == null ->
+                    Log.d(TAG, "verifySubscription inconclusive; keeping local entitlement")
+                result.verified ->
+                    Log.d(TAG, "verifySubscription confirmed: ${result.subscriptionState}")
+                else -> {
+                    Log.w(TAG, "verifySubscription denied (${result.subscriptionState}); revoking")
+                    _isPremium.value = false
                 }
             }
         }
