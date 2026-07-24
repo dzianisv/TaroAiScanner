@@ -63,10 +63,12 @@ fun TarotDashboardScreen(
     viewModel: TarotViewModel,
     onScanCard: (String) -> Unit,
     onNavToChat: () -> Unit,
-    onNavToVirtualDraw: () -> Unit
+    onNavToVirtualDraw: () -> Unit,
+    onUpgrade: () -> Unit = {}
 ) {
     val settingsState by viewModel.settingsState.collectAsState()
     val historyState by viewModel.historyState.collectAsState()
+    val isPremium by viewModel.isPremium.collectAsState()
     val authError by viewModel.authError.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -143,6 +145,64 @@ fun TarotDashboardScreen(
                         .fillMaxWidth()
                         .padding(bottom = 16.dp)
                 )
+            }
+
+            // Premium upgrade / status banner
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2C1354)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.5.dp, Color(0xFFD4AF37), RoundedCornerShape(20.dp))
+                        .then(if (!isPremium) Modifier.clickable { onUpgrade() } else Modifier)
+                        .testTag("premium_upgrade_card")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFF0F081D)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.WorkspacePremium,
+                                contentDescription = "Premium",
+                                tint = Color(0xFFD4AF37),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isPremium) "Mystic Premium Active" else "Upgrade to Premium",
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                color = Color.White
+                            )
+                            Text(
+                                text = if (isPremium)
+                                    "Unlimited readings and priority Oracle unlocked."
+                                else
+                                    "Unlock unlimited readings, detailed spreads, and priority Oracle.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFFB1A2C9),
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                        if (!isPremium) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Upgrade",
+                                tint = Color(0xFFD4AF37)
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
             }
 
             // Experience 1: Chat with Tarot Master
