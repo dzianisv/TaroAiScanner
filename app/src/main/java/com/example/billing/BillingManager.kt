@@ -29,7 +29,18 @@ import kotlinx.coroutines.launch
  * [endConnection] when done. Observe [isPremium] for entitlement and [priceText]
  * for the localized price string.
  */
-class BillingManager(context: Context) : PurchasesUpdatedListener {
+/**
+ * @param subscriptionVerifier optional server-side verifier. Given a Play
+ *   purchase token it returns true only if the secure proxy confirms the
+ *   subscription is entitled (ACTIVE / grace). When provided, premium is
+ *   granted ONLY after server verification (fails closed). When null, premium
+ *   falls back to the local acknowledged-purchase signal (insecure; used only
+ *   when no proxy is configured, e.g. tests).
+ */
+class BillingManager(
+    context: Context,
+    private val subscriptionVerifier: (suspend (purchaseToken: String) -> Boolean)? = null,
+) : PurchasesUpdatedListener {
 
     companion object {
         const val TAG = "BillingManager"
@@ -131,14 +142,13 @@ class BillingManager(context: Context) : PurchasesUpdatedListener {
             .build()
         billingClient.queryPurchasesAsync(params) { result, purchases ->
             if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                var owned = false
-                for (purchase in purchases) {
-                    if (isActivePremium(purchase)) {
-                        owned = true
-                        handlePurchase(purchase)
-                    }
+                val active = purchases.filter { isActivePremium(it) }
+                if (active.isEmpty()) {
+                    _isPremium.value = false
+                } else {
+                    // Re-verify every restored purchase server-side (fails closed).
+                    for (purchase in active) grantIfEntitled(purchase)
                 }
-                _isPremium.value = owned
             }
         }
     }
@@ -170,14 +180,11 @@ class BillingManager(context: Context) : PurchasesUpdatedListener {
 
     override fun onPurchasesUpdated(result: BillingResult, purchases: MutableList<Purchase>?) {
         if (result.responseCode == BillingClient.BillingResponseCode.OK && purchases != null) {
-            var owned = false
             for (purchase in purchases) {
                 if (isActivePremium(purchase)) {
-                    owned = true
-                    handlePurchase(purchase)
+                    grantIfEntitled(purchase)
                 }
             }
-            if (owned) _isPremium.value = true
         } else if (result.responseCode == BillingClient.BillingResponseCode.USER_CANCELED) {
             Log.d(TAG, "Purchase canceled by user")
         } else {
@@ -185,13 +192,44 @@ class BillingManager(context: Context) : PurchasesUpdatedListener {
         }
     }
 
+    /**
+     * Grant premium only after server-side verification (fails closed). When no
+     * verifier is configured, falls back to the local acknowledged-purchase
+     * signal. Acknowledgement always runs for a PURCHASED item so Play does not
+     * auto-refund.
+     */
+    private fun grantIfEntitled(purchase: Purchase) {
+        val verifier = subscriptionVerifier
+        if (verifier == null) {
+            _isPremium.value = true
+            handlePurchase(purchase)
+            return
+        }
+        scope.launch {
+            val verified = try {
+                verifier(purchase.purchaseToken)
+            } catch (e: Exception) {
+                Log.w(TAG, "Server verification failed; entitlement denied", e)
+                false
+            }
+            if (verified) {
+                _isPremium.value = true
+                handlePurchase(purchase)
+            } else {
+                Log.w(TAG, "Server did not verify subscription; premium NOT granted")
+                _isPremium.value = false
+            }
+        }
+    }
+
     private fun isActivePremium(purchase: Purchase): Boolean =
         purchase.products.contains(PREMIUM_MONTHLY) &&
             purchase.purchaseState == Purchase.PurchaseState.PURCHASED
 
+    /** Acknowledge a verified purchase so Play does not auto-refund it. Grant of
+     *  premium entitlement is decided by grantIfEntitled, not here. */
     private fun handlePurchase(purchase: Purchase) {
         if (purchase.purchaseState != Purchase.PurchaseState.PURCHASED) return
-        _isPremium.value = true
         if (!purchase.isAcknowledged) {
             val params = AcknowledgePurchaseParams.newBuilder()
                 .setPurchaseToken(purchase.purchaseToken)

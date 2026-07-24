@@ -428,4 +428,40 @@ object GeminiTarotService {
             luckyElements = listOf(color, hour, number, "${card.astrologicalSign} / ${card.element}")
         )
     }
+
+    /**
+     * Server-side subscription verification. POSTs the Play purchase token to the
+     * secure proxy's /verify-subscription endpoint (Firebase bearer auth) which
+     * calls the Play Developer API. Returns true only if the proxy reports the
+     * subscription as verified (ACTIVE or IN_GRACE_PERIOD). Fails closed: any
+     * error / missing proxy / missing token returns false so entitlement cannot
+     * be spoofed client-side.
+     */
+    suspend fun verifySubscription(
+        proxyUrl: String,
+        idToken: String,
+        purchaseToken: String,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (proxyUrl.isEmpty() || idToken.isEmpty() || purchaseToken.isEmpty()) {
+            return@withContext false
+        }
+        val base = proxyUrl.trimEnd('/')
+        val verifyUrl = "$base/verify-subscription"
+        val json = JSONObject().put("purchaseToken", purchaseToken).toString()
+        val body = json.toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url(verifyUrl)
+            .post(body)
+            .header("Authorization", "Bearer $idToken")
+            .build()
+        try {
+            textClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val payload = response.body?.string() ?: return@withContext false
+                JSONObject(payload).optBoolean("verified", false)
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
 }

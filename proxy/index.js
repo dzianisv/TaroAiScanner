@@ -4,6 +4,7 @@ const { getAuth } = require("firebase-admin/auth");
 const { defineSecret } = require("firebase-functions/params");
 const { onRequest } = require("firebase-functions/v2/https");
 const { OAuth2Client } = require("google-auth-library");
+const { verifyPurchase } = require("./lib/verifySubscription");
 
 if (!getApps().length) {
   const projectId =
@@ -225,6 +226,7 @@ function productionDependencies() {
       location,
     }),
     createDeveloperClient: (apiKey) => new GoogleGenAI({ apiKey }),
+    verifyPurchase: (purchaseToken) => verifyPurchase(purchaseToken),
   };
 }
 
@@ -256,10 +258,40 @@ function createHandler(overrides = {}) {
       return res.status(401).json(nestedError("Unauthorized: missing Bearer token."));
     }
 
+    let authedUid = null;
     try {
-      await authenticate(bearer[1], dependencies);
+      const decoded = await authenticate(bearer[1], dependencies);
+      authedUid = (decoded && (decoded.uid || decoded.sub)) || null;
     } catch {
       return res.status(401).json(nestedError("Unauthorized: invalid or expired token."));
+    }
+
+    // Server-side subscription entitlement check (Play Developer API).
+    const path = (req.path || (req.url || "").split("?")[0] || "").replace(/\/+$/, "");
+    if (path.endsWith("/verify-subscription")) {
+      const purchaseToken =
+        req.body && typeof req.body.purchaseToken === "string"
+          ? req.body.purchaseToken.trim()
+          : "";
+      if (!purchaseToken) {
+        return res.status(400).json(nestedError("Missing required 'purchaseToken' string."));
+      }
+      try {
+        const result = await dependencies.verifyPurchase(purchaseToken);
+        dependencies.logger.info("verifySubscription", {
+          uid: authedUid,
+          verified: result.verified,
+          state: result.subscriptionState,
+        });
+        return res.status(200).json(result);
+      } catch (verifyError) {
+        dependencies.logger.warn("verifySubscription Play API error.", {
+          status: providerStatus(verifyError) || "unknown",
+        });
+        return res
+          .status(502)
+          .json(nestedError("Failed to verify subscription with Google Play."));
+      }
     }
 
     const alias = normalizeModelAlias(req.query && req.query.model);

@@ -19,6 +19,8 @@ import androidx.navigation.compose.rememberNavController
 import com.example.billing.BillingManager
 import com.example.data.TarotDatabase
 import com.example.data.TarotRepository
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.tasks.await
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.PaywallScreen
 import com.example.ui.screens.TarotDashboardScreen
@@ -39,7 +41,22 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         // BillingClient needs an Activity for launchBillingFlow; hold it here.
-        billingManager = BillingManager(this)
+        // Entitlement is granted ONLY after the secure proxy verifies the purchase
+        // token against the Play Developer API (fails closed).
+        val billingRepository = TarotRepository(
+            TarotDatabase.getDatabase(applicationContext).tarotDao()
+        )
+        billingManager = BillingManager(this) { purchaseToken ->
+            val settings = billingRepository.settingsFlow.first()
+            val proxyUrl = settings.proxyUrl
+            val idToken = com.google.firebase.auth.FirebaseAuth.getInstance()
+                .currentUser?.getIdToken(false)?.await()?.token ?: ""
+            com.example.api.GeminiTarotService.verifySubscription(
+                proxyUrl = proxyUrl,
+                idToken = idToken,
+                purchaseToken = purchaseToken,
+            )
+        }
         billingManager.startConnection()
 
         setContent {
