@@ -3,7 +3,7 @@ name: proxy-e2e
 # End-to-end integration test for the geminiProxy Cloud Function.
 #
 # Tier 1 (always runs, no secrets): asserts the deployed proxy enforces its HTTP
-#   contract (GET->405, POST no-auth->401, POST bad-auth->401). This doubles as a
+#   contract (GET health->200, POST no-auth->401, POST bad-auth->401). This doubles as a
 #   live deployment gate: if the proxy URL is not serving the function, Tier 1
 #   fails.
 #
@@ -48,7 +48,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: proxy/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit and static checks
+        run: npm test && npm run check
 
       - name: Install deps (if any)
         run: npm ci || npm install
