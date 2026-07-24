@@ -64,7 +64,10 @@ class BillingManager(
     private val billingClient: BillingClient = BillingClient.newBuilder(appContext)
         .setListener(this)
         .enablePendingPurchases(
-            PendingPurchasesParams.newBuilder().enableOneTimeProducts().build()
+            PendingPurchasesParams.newBuilder()
+                .enableOneTimeProducts()
+                .enablePrepaidPlans()
+                .build()
         )
         .build()
 
@@ -117,12 +120,13 @@ class BillingManager(
             )
             .build()
 
-        billingClient.queryProductDetailsAsync(params) { result, productDetailsList ->
+        billingClient.queryProductDetailsAsync(params) { result, queryProductDetailsResult ->
             if (result.responseCode != BillingClient.BillingResponseCode.OK) {
                 Log.w(TAG, "queryProductDetails failed: ${result.debugMessage}")
                 return@queryProductDetailsAsync
             }
-            val details = productDetailsList.firstOrNull { it.productId == PREMIUM_MONTHLY }
+            val details = queryProductDetailsResult.productDetailsList
+                .firstOrNull { it.productId == PREMIUM_MONTHLY }
             premiumDetails = details
             _priceText.value = details
                 ?.subscriptionOfferDetails
