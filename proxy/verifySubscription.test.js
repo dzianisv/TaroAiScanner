@@ -3,7 +3,9 @@ const { test } = require("node:test");
 
 const {
   verifyPurchase,
+  playErrorStatus,
   PACKAGE_NAME,
+  INVALID_TOKEN_STATE,
 } = require("./lib/verifySubscription");
 
 const { createVerifyHandler } = require("./index")._test;
@@ -88,6 +90,83 @@ test("verified=false and state UNKNOWN when Play omits subscriptionState", async
 
   assert.equal(result.verified, false);
   assert.equal(result.subscriptionState, "UNKNOWN");
+});
+
+// ---------------------------------------------------------------------------
+// Play error classification: a forged/gone token is an AUTHORITATIVE negative,
+// while permission/transient faults stay inconclusive (must not mass-revoke).
+// ---------------------------------------------------------------------------
+
+function playError(status, message = "play error") {
+  const error = new Error(message);
+  error.response = { status };
+  return error;
+}
+
+test("playErrorStatus reads gaxios response status", () => {
+  assert.equal(playErrorStatus(playError(403)), 403);
+  assert.equal(playErrorStatus({ status: 410 }), 410);
+  assert.equal(playErrorStatus({ code: 400 }), 400);
+  assert.equal(playErrorStatus(new Error("no status")), null);
+  assert.equal(playErrorStatus(null), null);
+});
+
+test("malformed token (Play 400) is an authoritative not-entitled result", async () => {
+  const result = await verifyPurchase("forged", {
+    fetchFn: async () => {
+      throw playError(400, "Invalid Value");
+    },
+  });
+
+  assert.equal(result.verified, false);
+  assert.equal(result.subscriptionState, INVALID_TOKEN_STATE);
+  assert.equal(result.productId, null);
+});
+
+test("gone token (Play 410) is an authoritative not-entitled result", async () => {
+  const result = await verifyPurchase("expired-gone", {
+    fetchFn: async () => {
+      throw playError(410, "Gone");
+    },
+  });
+
+  assert.equal(result.verified, false);
+  assert.equal(result.subscriptionState, INVALID_TOKEN_STATE);
+});
+
+test("permission denied (Play 403) stays inconclusive by throwing", async () => {
+  await assert.rejects(
+    verifyPurchase("tok", {
+      fetchFn: async () => {
+        throw playError(403, "The current user has insufficient permissions.");
+      },
+    }),
+    /insufficient permissions/,
+  );
+});
+
+test("wrong-package / not-found (Play 404) stays inconclusive by throwing", async () => {
+  // 404 must NOT revoke: it is also what Play returns for a bad packageName,
+  // so treating it as authoritative would mass-revoke on a config error.
+  await assert.rejects(
+    verifyPurchase("tok", {
+      fetchFn: async () => {
+        throw playError(404, "Not Found");
+      },
+    }),
+    /Not Found/,
+  );
+});
+
+test("Play 5xx stays inconclusive by throwing", async () => {
+  await assert.rejects(
+    verifyPurchase("tok", {
+      fetchFn: async () => {
+        throw playError(503, "backend error");
+      },
+    }),
+    /backend error/,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -202,6 +281,26 @@ test("verified=false is passed through with 200 (client revokes entitlement)", a
   });
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.verified, false);
+});
+
+test("forged token surfaces as 200 verified=false, not an inconclusive 502", async () => {
+  // End-to-end of the fraud path: verifyPurchase converts Play 400 into an
+  // authoritative negative, so the client revokes instead of keeping premium.
+  const { verifyPurchase: realVerify } = require("./lib/verifySubscription");
+  const res = await invokeVerify(verifyRequest(), {
+    verifyPurchase: (token) =>
+      realVerify(token, {
+        fetchFn: async () => {
+          const e = new Error("Invalid Value");
+          e.response = { status: 400 };
+          throw e;
+        },
+      }),
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.verified, false);
+  assert.equal(res.body.subscriptionState, "INVALID_TOKEN");
 });
 
 test("Play API failure returns 502 without leaking details", async () => {
