@@ -73,3 +73,83 @@ gcloud functions deploy secureGeminiProxy \
 Add `,GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID` to `--set-env-vars` only when Google OAuth ID-token fallback is needed. Firebase ID-token verification remains enabled without it. Pinning a numbered secret version instead of `latest` is preferable when releases require deterministic rollback.
 
 No deployment is performed by the test or CI scripts.
+
+## verifySubscription
+
+Server-side subscription entitlement check. The client (`BillingManager.kt`)
+POSTs `{purchaseToken, productId}` with a Firebase ID token; the function calls
+the Play Developer API `purchases.subscriptionsv2.get` and returns
+`{verified, subscriptionState, latestOrderId, expiryTime, productId}`.
+
+Deploy the same way as the Gemini proxy, with a different entry point and no
+Gemini secret:
+
+```bash
+gcloud functions deploy verifySubscription \
+  --gen2 \
+  --runtime=nodejs22 \
+  --region="$REGION" \
+  --source=. \
+  --entry-point=verifySubscription \
+  --trigger-http \
+  --allow-unauthenticated \
+  --service-account="$RUNTIME_SERVICE_ACCOUNT" \
+  --set-env-vars="GCLOUD_PROJECT=$PROJECT_ID"
+```
+
+### Required Play Console permission
+
+`androidpublisher.googleapis.com` must be enabled in the GCP project, and the
+runtime service account must be invited as a user in Play Console with the
+**account-level** permission:
+
+- **View financial data, orders, and cancellation survey responses** — this is
+  the one that grants "access the Purchases API". Granting only *Manage orders
+  and subscriptions*, or granting either permission at app level, is **not**
+  sufficient: `purchases.*` returns HTTP 401 *"The current user has insufficient
+  permissions to perform the requested operation."*
+
+Permission changes can take minutes and up to 24 hours to propagate.
+
+Diagnosing a 401 is much faster against the Play API directly than through the
+function. `reviews.list` returning 200 while `purchases.*` returns 401 proves
+the service account is linked and propagated, and that only the financial-data
+permission is missing:
+
+```bash
+AT=$(gcloud auth print-access-token \
+  --impersonate-service-account="$RUNTIME_SERVICE_ACCOUNT" \
+  --scopes="https://www.googleapis.com/auth/androidpublisher")
+B="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE_NAME"
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $AT" "$B/reviews"
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $AT" \
+  "$B/purchases/subscriptionsv2/tokens/faketok"
+```
+
+A `400 Invalid Value` on the purchases probe means the ACL passed and only the
+dummy token was rejected — that is the success signal.
+
+### Pending: dedicated runtime service account
+
+`verifySubscription` currently shares the project's **default compute** service
+account with `secureGeminiProxy`. Because the Purchases API requires an
+account-level financial-data grant, that also gives the Gemini proxy — which
+processes untrusted user input — read access to developer-account financial
+data. A dedicated account `play-verifier@<project>.iam.gserviceaccount.com` has
+been created and invited in Play Console with only the two required
+permissions.
+
+Cut over once its Play permission has propagated (verify with the probe above,
+expecting `400`):
+
+```bash
+gcloud functions deploy verifySubscription \
+  --gen2 --runtime=nodejs22 --region="$REGION" --source=. \
+  --entry-point=verifySubscription --trigger-http --allow-unauthenticated \
+  --service-account="play-verifier@$PROJECT_ID.iam.gserviceaccount.com" \
+  --set-env-vars="GCLOUD_PROJECT=$PROJECT_ID"
+```
+
+Then remove both financial-data permissions from the default compute service
+account in Play Console. Do not remove them before the cutover is verified —
+entitlement verification would fail closed to "inconclusive".
