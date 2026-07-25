@@ -334,7 +334,7 @@ exports.secureGeminiProxy = onRequest(
 // Play Console "Enable API access" linked, or Play calls fail with 403.
 //
 // Business logic lives in lib/verifySubscription.js for testability.
-const { verifyPurchase } = require("./lib/verifySubscription");
+const { verifyPurchase, playErrorStatus } = require("./lib/verifySubscription");
 
 function createVerifyHandler(overrides = {}) {
   const dependencies = { ...productionDependencies(), ...overrides };
@@ -377,7 +377,10 @@ function createVerifyHandler(overrides = {}) {
       const result = await verify(purchaseToken);
       return res.status(200).json(result);
     } catch (error) {
+      // Log the Play HTTP status so an ACL/propagation problem (401/403) is
+      // distinguishable from a bad token or a transient fault in production.
       dependencies.logger.error("verifySubscription Play API error.", {
+        status: playErrorStatus(error) || "unknown",
         message: error && error.message,
       });
       return res.status(502).json(nestedError("Failed to verify subscription with Google Play."));
