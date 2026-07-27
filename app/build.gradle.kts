@@ -70,7 +70,14 @@ secrets {
   defaultPropertiesFileName = ".env.example"
 }
 
-googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+// ERROR, never WARN. With WARN, a build without `app/google-services.json`
+// (gitignored, and never provisioned by CI until now) succeeds but produces an
+// APK with no google_app_id / gcm_defaultSenderId / default_web_client_id
+// resources. `FirebaseAuth.getInstance()` then throws
+// (ui/viewmodel/TarotViewModel.kt) and MainActivity.kt blocks on `isSignedIn`,
+// so the app is a brick at sign-in. That is exactly how the published
+// mystic-tarot APKs shipped. Fail the build instead.
+googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.ERROR }
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
