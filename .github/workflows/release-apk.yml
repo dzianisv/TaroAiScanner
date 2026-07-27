@@ -53,6 +53,21 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-key.jks"
 
+      # `app/google-services.json` is gitignored (.gitignore:19). Without this
+      # step the build produced an APK with no google_app_id /
+      # gcm_defaultSenderId / default_web_client_id, so FirebaseAuth.getInstance()
+      # throws and MainActivity blocks forever on the sign-in gate. Mirrors
+      # KineticAiCoach's release-apk.yml.
+      - name: Provision google-services.json
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            echo "::error::GOOGLE_SERVICES_JSON_BASE64 secret is not set — the APK would ship without Firebase config and brick at sign-in."
+            exit 1
+          fi
+          echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
+
       - name: Assemble signed release APK
         env:
           KEYSTORE_PATH: ${{ runner.temp }}/upload-key.jks
@@ -71,6 +86,29 @@ jobs:
         run: |
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)
           "$BT/apksigner" verify --verbose "${{ steps.apk.outputs.path }}"
+
+      # Fixing the build inputs is not enough — assert against the bytes we are
+      # about to publish. A dropped secret or a reverted gradle strategy fails here.
+      - name: Verify built APK carries Firebase config
+        run: |
+          set -euo pipefail
+          APK="${{ steps.apk.outputs.path }}"
+          SCAN="$RUNNER_TEMP/apk-scan"
+          rm -rf "$SCAN"; mkdir -p "$SCAN"
+          unzip -o -q "$APK" -d "$SCAN" 'resources.arsc'
+
+          fail=0
+          for key in google_app_id gcm_defaultSenderId default_web_client_id; do
+            if grep -a -q "$key" "$SCAN/resources.arsc"; then
+              echo "firebase resource present: $key"
+            else
+              echo "::error::APK is missing the '$key' resource — google-services.json was not applied; the app bricks at sign-in."
+              fail=1
+            fi
+          done
+
+          rm -rf "$SCAN"
+          exit "$fail"
 
       - name: Stage artifacts (stable + versioned names)
         run: |

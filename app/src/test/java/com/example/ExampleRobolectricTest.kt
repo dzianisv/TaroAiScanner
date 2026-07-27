@@ -6,10 +6,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
+// SDK level comes from app/src/test/resources/robolectric.properties.
+// Do not hardcode `@Config(sdk = [36])` here: Robolectric 4.16.1 ships no
+// android-all runtime for API 36 and fails with UnsupportedOperationException.
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
 class ExampleRobolectricTest {
 
   @Test
