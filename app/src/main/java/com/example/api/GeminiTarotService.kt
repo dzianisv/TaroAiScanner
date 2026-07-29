@@ -58,6 +58,18 @@ object GeminiTarotService {
         .writeTimeout(12, TimeUnit.SECONDS)
         .build()
 
+    // Chat is a full LLM completion, not a "quick user interaction": the model
+    // writes up to three paragraphs, which regularly takes well over 8s. Using
+    // textClient here made every chat turn fail with SocketTimeoutException and
+    // surface as "The ethereal connection was interrupted: timeout" -- and,
+    // unlike the reading paths, chat has no mock fallback, so the feature was
+    // simply broken. Give it the same headroom as the scan/reading client.
+    private val chatClient = client.newBuilder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
     private fun Bitmap.toBase64(): String {
         val outputStream = ByteArrayOutputStream()
         // Compress to JPEG to save bandwidth while keeping details clear
@@ -377,7 +389,7 @@ object GeminiTarotService {
         val request = requestBuilder.build()
 
         try {
-            val response = textClient.newCall(request).execute()
+            val response = chatClient.newCall(request).execute()
             if (!response.isSuccessful) {
                 val errorBody = response.body?.string()
                 val errorMessage = try {
