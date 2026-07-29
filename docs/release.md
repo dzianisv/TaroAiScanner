@@ -72,11 +72,21 @@ Do not guess Play URL slugs; navigate via the left nav. See `thoughts/play-relea
 4. Verify: Closed testing - Alpha track shows the new versionCode "Available to selected testers",
    or via API: `GET $B/edits/{editId}/tracks` shows `alpha.releases[0].versionCodes == ["4"]`.
 
-## Current live state (verified 2026-07-27)
+## Current live state (verified 2026-07-29 via API)
 
-- **Closed testing - Alpha**: release **2 (1.1)** still live — versionCode 4 (1.3, billing 9.1.0)
-  is uploaded to Play's bundle library (confirmed via `edits/{id}/bundles`, sha256 matches the local
-  build exactly) but **not yet assigned to a track** — blocked on the permission grant above.
+- **Closed testing - Alpha**: **4 (1.3) is LIVE**, `status: completed`. The permission grant landed
+  and the track release was committed. Verified 2026-07-29 with two independent fresh edits
+  (`edits.insert` → `GET edits/{id}/tracks`), raw response:
+
+  ```json
+  {"track":"alpha","releases":[{"name":"4 (1.3)","versionCodes":["4"],
+   "releaseNotes":[{"language":"en-US","text":"v1.3 billing 9.1.0 - subscription entitlement server-verified"}],
+   "status":"completed"}]}
+  ```
+
+  `production`, `beta`, `internal` tracks remain empty. Bundle library: versionCodes `[1, 2, 4]`.
+- The `edits:commit` 403 blocker described above is **resolved** — no browser step is needed for
+  future releases; the scripted flow works end to end.
 - **Subscription**: `mystic_tarot_premium_monthly` / "Mystic Tarot Premium (Monthly)" · base plan
   `monthly-autorenew` · **$4.99 USD** (177 regions) · **Active**. (PRD lists $9.99 — unreconciled.)
 - **Server-side entitlement**: `verifySubscription` Cloud Function deployed and live-verified —
@@ -94,8 +104,7 @@ remaining blocker before the subscription is sellable to real users:
 1. ~~Merge PR #4 (`feat/play-billing`)~~ — **done**, merged to `main`.
 2. ~~Fix product ID mismatch~~ — **done**.
 3. ~~Server-side entitlement~~ — **done**, deployed, live-verified.
-4. **Assign v4 AAB to a track and commit** — blocked on the one Play Console permission grant
-   documented above. Everything else in this step is already scripted and proven to work.
+4. ~~Assign v4 AAB to a track and commit~~ — **done 2026-07-29**, alpha = `4 (1.3)` completed.
 5. **Payout method** — no evidence found that this has been configured. Still open, blocking
    receipt of money even after step 4 lands.
 
