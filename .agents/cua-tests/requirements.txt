@@ -1,0 +1,11 @@
+# CUA demo-recording harness dependencies.
+#
+# a-test provides the Android screen recorder (segmented, CFR-normalised) and
+# the video evidence gate. Pinned to an exact commit so a recording that passed
+# the gate can be reproduced later: the gate's thresholds are part of the
+# result, not an implementation detail.
+#
+# This SHA is https://github.com/dzianisv/a-test/pull/23 (screenrecord
+# --size/--bit-rate control + dark-theme-safe blank check), both of which this
+# harness depends on. Repoint at main once that PR merges.
+a-test @ git+https://github.com/dzianisv/a-test.git@4337df164931f05af6974c9c82f69806d6f62fcc
