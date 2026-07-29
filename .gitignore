@@ -26,3 +26,10 @@ build-release.sh
 distribute-firebase.sh
 firebase-debug.log
 proxy/node_modules/
+
+# CUA test harness
+__pycache__/
+*.pyc
+
+# Build outputs and demo recordings: large binaries, kept locally only
+release-artifacts/
