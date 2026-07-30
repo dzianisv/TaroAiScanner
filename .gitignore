@@ -33,3 +33,7 @@ __pycache__/
 
 # Build outputs and demo recordings: large binaries, kept locally only
 release-artifacts/
+
+# agent-local scaffolding (not project content)
+.worktrees/
+.agents/supervisor/
