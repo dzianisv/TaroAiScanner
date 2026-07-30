@@ -9,7 +9,7 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -44,13 +44,6 @@ object GeminiTarotService {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    // Shorter, non-blocking timeouts for quick user interactions
-    private val textClient = client.newBuilder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .writeTimeout(5, TimeUnit.SECONDS)
-        .build()
-
     // Medium timeouts for image scanning operations
     private val scanClient = client.newBuilder()
         .connectTimeout(8, TimeUnit.SECONDS)
@@ -60,7 +53,7 @@ object GeminiTarotService {
 
     // Chat is a full LLM completion, not a "quick user interaction": the model
     // writes up to three paragraphs, which regularly takes well over 8s. Using
-    // textClient here made every chat turn fail with SocketTimeoutException and
+    // the old 8s textClient here made every chat turn fail with SocketTimeoutException and
     // surface as "The ethereal connection was interrupted: timeout" -- and,
     // unlike the reading paths, chat has no mock fallback, so the feature was
     // simply broken. Give it the same headroom as the scan/reading client.
@@ -69,6 +62,26 @@ object GeminiTarotService {
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    // Same reasoning as chatClient: interpreting a drawn card is a full LLM
+    // completion (five prose fields of JSON), not a "quick user interaction".
+    // It used to run on the 8s textClient read timeout inside a 10s coroutine
+    // budget and fall back to getMockReading() -- so a slow model silently
+    // served canned text as if it were the AI's answer.
+    private val readingClient = client.newBuilder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    /** Overall deadline for a reading call; must exceed readingClient's read timeout. */
+    private const val READING_DEADLINE_MS = 75_000L
+
+    /** Thrown when neither a proxy nor a usable API key is configured. */
+    class NotConfiguredException : IllegalStateException(
+        "No AI connection configured. Add a proxy URL or your Gemini API key in Settings, " +
+            "or switch on Offline Mode for sample readings."
+    )
 
     private fun Bitmap.toBase64(): String {
         val outputStream = ByteArrayOutputStream()
@@ -96,7 +109,9 @@ object GeminiTarotService {
         idToken: String = ""
     ): TarotReading? = withContext(Dispatchers.IO) {
         if (offlineMode) {
-            return@withContext getMockReading("The Star", "Upright")
+            // User explicitly asked for Offline Mode: serve the bundled sample
+            // reading, flagged so the UI labels it as NOT an AI answer.
+            return@withContext getMockReading("The Star", "Upright", isOffline = true)
         }
 
         val base64Image = bitmap.toBase64()
@@ -153,8 +168,9 @@ object GeminiTarotService {
         } else {
             val apiKey = if (customApiKey.isNotEmpty()) customApiKey else BuildConfig.GEMINI_API_KEY
             if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-                // Return fallback reading immediately if no direct API key and no proxy configured
-                return@withContext getMockReading("The Star", "Upright")
+                // Not configured is a real error, not a reading. Never dress the
+                // canned sample up as the AI's answer.
+                throw NotConfiguredException()
             }
             val targetModel = resolveDirectModelName(MODEL_SCAN)
             "https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent?key=$apiKey"
@@ -209,7 +225,7 @@ object GeminiTarotService {
         idToken: String = ""
     ): TarotReading? = withContext(Dispatchers.IO) {
         if (offlineMode) {
-            return@withContext getMockReading(cardName, orientation)
+            return@withContext getMockReading(cardName, orientation, isOffline = true)
         }
 
         val prompt = """
@@ -255,7 +271,7 @@ object GeminiTarotService {
         } else {
             val apiKey = if (customApiKey.isNotEmpty()) customApiKey else BuildConfig.GEMINI_API_KEY
             if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-                return@withContext getMockReading(cardName, orientation)
+                throw NotConfiguredException()
             }
             val targetModel = resolveDirectModelName(MODEL_DESCRIBE)
             "https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent?key=$apiKey"
@@ -271,9 +287,12 @@ object GeminiTarotService {
 
         val request = requestBuilder.build()
 
+        // No getMockReading() fallback here on purpose: a failed AI call must
+        // surface as an honest error the user can retry from, never as canned
+        // text rendered indistinguishably from a real reading.
         try {
-            val result = withTimeoutOrNull(10000) {
-                val response = textClient.newCall(request).execute()
+            return@withContext withTimeout(READING_DEADLINE_MS) {
+                val response = readingClient.newCall(request).execute()
                 if (!response.isSuccessful) {
                     val errorBody = response.body?.string()
                     val errorMessage = try {
@@ -283,23 +302,22 @@ object GeminiTarotService {
                     }
                     throw Exception(errorMessage)
                 }
-                val responseBody = response.body?.string() ?: return@withTimeoutOrNull null
+                val responseBody = response.body?.string() ?: return@withTimeout null
                 val responseJson = JSONObject(responseBody)
-                
+
                 val candidates = responseJson.optJSONArray("candidates")
                 val text = candidates?.optJSONObject(0)
                     ?.optJSONObject("content")
                     ?.optJSONArray("parts")
                     ?.optJSONObject(0)
-                    ?.optString("text") ?: return@withTimeoutOrNull null
+                    ?.optString("text") ?: return@withTimeout null
 
                 val cleanedJson = cleanJsonBody(text)
                 tarotAdapter.fromJson(cleanedJson)
             }
-            return@withContext result ?: getMockReading(cardName, orientation)
         } catch (e: Exception) {
             e.printStackTrace()
-            return@withContext getMockReading(cardName, orientation)
+            throw e
         }
     }
 
@@ -416,7 +434,16 @@ object GeminiTarotService {
         }
     }
 
-    private fun getMockReading(name: String, orientation: String): TarotReading {
+    /**
+     * Bundled offline interpretation. NEVER return this from a failed AI call:
+     * callers must pass isOffline = true so the UI can label it, and the only
+     * legitimate caller is the explicit Offline Mode branch.
+     */
+    internal fun getMockReading(
+        name: String,
+        orientation: String,
+        isOffline: Boolean = false
+    ): TarotReading {
         val card = TarotDeck.majorArcana.firstOrNull { it.name.equals(name, ignoreCase = true) }
             ?: TarotDeck.majorArcana.first()
         
@@ -437,7 +464,8 @@ object GeminiTarotService {
             generalMeaning = meaning,
             advice = "Meditate on the archetype of ${card.name} (${orientation}). Use its wisdom to ${card.keywords.last().lowercase()}.",
             warning = "Beware of over-relying on superficial solutions. Real transformation requires balancing ${card.element} energies.",
-            luckyElements = listOf(color, hour, number, "${card.astrologicalSign} / ${card.element}")
+            luckyElements = listOf(color, hour, number, "${card.astrologicalSign} / ${card.element}"),
+            isOffline = isOffline
         )
     }
 }

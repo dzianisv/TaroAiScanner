@@ -8,7 +8,7 @@ import androidx.room.TypeConverters
 
 @Database(
     entities = [TarotReadingEntity::class, TarotSettingsEntity::class, TarotChatMessageEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 @TypeConverters(ListTypeConverter::class)

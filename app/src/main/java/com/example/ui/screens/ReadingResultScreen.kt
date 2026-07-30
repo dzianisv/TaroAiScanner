@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -121,10 +122,49 @@ fun ReadingResultScreen(
 }
 
 @Composable
+fun OfflineReadingBanner() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("offline_reading_banner")
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF2E2410))
+            .border(1.dp, Color(0xFFD4AF37), RoundedCornerShape(12.dp))
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.Warning,
+            contentDescription = null,
+            tint = Color(0xFFD4AF37),
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(
+                "OFFLINE SAMPLE READING",
+                color = Color(0xFFD4AF37),
+                fontWeight = FontWeight.Black,
+                fontSize = 12.sp,
+                letterSpacing = 1.2.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "This is the bundled offline interpretation, not an AI reading. " +
+                    "Turn off Offline Mode in Settings for a live Gemini reading.",
+                color = Color(0xFFE8DCC0),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
 fun ErrorState(message: String) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("reading_error_state")
             .clip(RoundedCornerShape(16.dp))
             .background(Color(0xFF2E1515))
             .border(1.dp, WarningRed, RoundedCornerShape(16.dp))
@@ -157,6 +197,11 @@ fun ErrorState(message: String) {
 @Composable
 fun ReadingSuccessState(reading: TarotReading, bitmap: Bitmap?) {
     Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        // An offline/sample reading is NOT the AI's answer. Say so, loudly and
+        // above the fold, so it can never be mistaken for a real Gemini reading.
+        if (reading.isOffline) {
+            OfflineReadingBanner()
+        }
         // Scanned Card Preview
         bitmap?.let {
             Card(

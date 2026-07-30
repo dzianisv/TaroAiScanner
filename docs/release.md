@@ -123,3 +123,66 @@ days** before "Apply for production" unlocks. **Organization/company accounts ar
 2. THEN promote that build to Production with the ASO/listing assets.
 
 Promoting first only helps distribution/installs, not revenue.
+
+## Verifying a real purchase (what is actually blocking it)
+
+Investigated 2026-07-29 while recording the paywall demo. The blocker is **not** the app and
+**not** the Play product configuration — both are correct. It is device account provisioning.
+
+### Verified correct via the Play Developer API
+
+`GET /androidpublisher/v3/applications/com.aistudio.mystictarot.qxrptl/subscriptions`
+(authenticated with the `playstore-deploy` SA) returns:
+
+| field | value |
+|---|---|
+| `productId` | `mystic_tarot_premium_monthly` |
+| `basePlanId` | `monthly-autorenew` |
+| `state` | **ACTIVE** |
+| US `price` | **USD 4.99** |
+| US `newSubscriberAvailability` | `true` |
+| listing title | `Mystic Tarot Premium (Monthly)` |
+
+So the $4.99/mo offer the paywall is meant to show is live and correctly priced.
+
+### What actually fails, and why
+
+On a fresh emulator the paywall renders but the price row stays on `Loading price…` and
+SUBSCRIBE does nothing. Device logs give the reason directly:
+
+```
+$ adb shell dumpsys account | grep Accounts:
+  Accounts: 0
+
+$ adb logcat | grep Billing
+W/BillingClient: In-app billing API version 3 is not supported on this device.
+W/BillingManager: Billing setup failed: Billing service unavailable on device.
+```
+
+The chain is: **no Google account on the device → BillingClient cannot connect →
+`BILLING_UNAVAILABLE` → `queryProductDetails` never returns → `priceText` stays null → the
+paywall renders "Loading price…" and `launchBillingFlow()` has nothing to launch.**
+
+A debug-signed sideload cannot shortcut this: Play Billing only serves ProductDetails to a
+build Play recognises, installed for a signed-in account.
+
+### Runbook to close it out
+
+1. Sign a Google account into the test device (`Settings → Accounts → Add account`). It must be
+   the one used in the next two steps. **This is the only missing input** — no credential for a
+   Play-capable Google account is in Bitwarden today (the vault holds service accounts and
+   third-party logins that merely reuse `vibeteaichnologies@gmail.com` as a username).
+2. Play Console → **Setup → License testing** → add that account. This makes its purchases test
+   purchases (no real charge, and it can buy without a payment method).
+3. Play Console → **Testing → Closed testing → Alpha → Testers** → add the same account to the
+   "Mystic Tarot Testers" list, then opt in via the returned web link.
+4. Install the app **from the Play Store on that device** (not `adb install`) so the build is
+   Play-signed and licensed to the account.
+5. Re-run `.agents/cua-tests/record_journeys.py paywall`. It already asserts on the focused
+   window package, so a genuine sheet is reported as
+   `Play purchase sheet appeared (focus=com.android.vending)` — and the price row assertion will
+   flip from `Loading price…` to the localized ProductDetails price.
+
+Until step 1 has a credential, the paywall demo can only be recorded up to the in-app offer
+screen. That is what the current `taro_paywall_short.mp4` shows, and the run reports the stop
+point honestly rather than faking a sheet.
