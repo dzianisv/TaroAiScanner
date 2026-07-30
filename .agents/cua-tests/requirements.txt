@@ -5,7 +5,8 @@
 # the gate can be reproduced later: the gate's thresholds are part of the
 # result, not an implementation detail.
 #
-# This SHA is https://github.com/dzianisv/a-test/pull/23 (screenrecord
-# --size/--bit-rate control + dark-theme-safe blank check), both of which this
-# harness depends on. Repoint at main once that PR merges.
-a-test @ git+https://github.com/dzianisv/a-test.git@4337df164931f05af6974c9c82f69806d6f62fcc
+# This SHA is the squash-merge of https://github.com/dzianisv/a-test/pull/23
+# (screenrecord --size/--bit-rate control + dark-theme-safe blank check), both
+# of which this harness depends on. It is now a-test main; kept as an exact SHA
+# rather than a branch so the gate's verdict stays reproducible.
+a-test @ git+https://github.com/dzianisv/a-test.git@225bb430290b7baff89347618c5f0c1d9f3a259c

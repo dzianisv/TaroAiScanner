@@ -150,6 +150,7 @@ class TarotViewModel(private val repository: TarotRepository) : ViewModel() {
                         advice = result.advice,
                         warning = result.warning,
                         luckyElementsJson = ListTypeConverter().fromList(result.luckyElements),
+                        isOffline = result.isOffline,
                         spreadType = _spreadType.value
                     )
                     repository.saveReading(entity)
@@ -203,6 +204,7 @@ class TarotViewModel(private val repository: TarotRepository) : ViewModel() {
                         advice = result.advice,
                         warning = result.warning,
                         luckyElementsJson = ListTypeConverter().fromList(result.luckyElements),
+                        isOffline = result.isOffline,
                         spreadType = "Virtual Card Draw"
                     )
                     repository.saveReading(entity)

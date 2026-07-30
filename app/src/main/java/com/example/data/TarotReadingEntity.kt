@@ -18,6 +18,8 @@ data class TarotReadingEntity(
     val warning: String,
     val luckyElementsJson: String, // Stored as JSON string
     val spreadType: String,
+    /** True when this stored reading is the bundled offline sample, not AI output. */
+    val isOffline: Boolean = false,
     val timestamp: Long = System.currentTimeMillis()
 )
 
